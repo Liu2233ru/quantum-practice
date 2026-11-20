@@ -37,4 +37,4 @@ export const chapters = groups.flatMap(group => group.chapters.map(
 ));
 export const chapterById = Object.fromEntries(chapters.map(chapter => [chapter.id, chapter]));
 export const levelNames = ["基础", "进阶", "挑战"];
-export const typeNames = {single: "单选", multiple: "多选", written: "推导自评"};
+export const typeNames = {written: "推导大题", judgment: "概念判断", single: "单选", multiple: "多选"};

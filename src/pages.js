@@ -1,5 +1,6 @@
-import {chapterById, chapters, groups, levelNames, typeNames} from "./chapters.js";
+import {chapterById, chapters, groups, levelNames, typeNames} from "./chapters.js?v=1.1";
 import {escape, icon, rich} from "./display.js";
+import {earnedFor, pointsFor} from "./engine.js?v=1.1";
 
 const navItems = {chapters: "章节练习", custom: "自由组卷", bank: "题库全览", wrong: "错题本"};
 export function navigation(active, pending) {
@@ -35,19 +36,19 @@ export function home(bank, data) {
   const pending = Object.values(data.stats).filter(item => item.pending).length;
   return `<section class="hero">
     <div class="hero-copy"><p class="eyebrow">格里菲斯《量子力学概论》· 第 3 版</p><h1>量子力学练习册</h1>
-    <p>沿教材顺序逐章练习，或自由组合不同章节。每道题都有提示和推导解析。</p>
-    <div class="actions">${link("开始第 1 章", "#chapter/g01", "hero-primary")}${link("自由组卷", "#custom", "hero-secondary")}</div></div>
+    <p>逐章练习教材大题，按小问对照得分点自评。用概念判断查漏补缺。</p>
+    <div class="actions">${link("组 100 分大题卷", "#custom", "hero-primary")}${link("开始第 1 章", "#chapter/g01", "hero-secondary")}</div></div>
     <figure class="hero-art"><canvas role="img" aria-label="高斯波包的实部与其上下包络"></canvas><figcaption>高斯波包 · 实部与包络</figcaption></figure>
   </section>
   ${data.session ? `<div class="notice resume"><span>${escape(data.session.label)} · 已答 ${Object.keys(data.session.answers).length} / ${data.session.ids.length} 题</span>${data.session.finished ? link("查看上次小结", "#results", "small") : link("继续练习", "#session", "small")}</div>` : ""}
-  <div class="metrics">${metric("题库题目", bank.length, "bank")}${metric("已做题目", Object.keys(data.stats).length, "done")}${metric("待订正", pending, "wrong")}</div>
+  <div class="metrics">${metric("推导大题", bank.filter(q => q.type === "written").length, "bank")}${metric("已做题目", Object.keys(data.stats).length, "done")}${metric("待订正", pending, "wrong")}</div>
   ${groups.map(group => `<section><div class="section-head"><h2>${group.title}</h2><p>${group.chapters.length} ${group.title === "补充专题" ? "个专题" : "章"}</p></div>
     <div class="chapter-grid">${group.chapters.map(([id, label, title, description]) => {
       const available = bank.filter(question => question.chapter === id);
       const done = available.filter(question => data.stats[question.id]).length;
       const percent = available.length ? 100 * done / available.length : 0;
       return `<a class="card chapter-card" href="#chapter/${id}">
-        <div class="chapter-top"><span class="chapter-index">${label}</span><span>${available.length} 题</span></div>
+        <div class="chapter-top"><span class="chapter-index">${label}</span><span>${available.filter(q => q.type === "written").length} 道大题</span></div>
         <h3>${title}</h3><p>${description}</p>
         <div class="chapter-foot"><span>已做 ${done} / ${available.length}</span><span class="track" aria-hidden="true"><span style="width:${percent}%"></span></span></div></a>`;
     }).join("")}</div></section>`).join("")}`;
@@ -62,47 +63,55 @@ const types = Object.entries(typeNames);
 const chapterOptions = chapters.map(ch => [ch.id, `${ch.label} · ${ch.title}`]);
 
 export function customPage() {
-  return heading("自由组卷", "任选章节、题型和难度。题量允许时，先为每个有候选题的章节各抽一道。") + `
+  return heading("自由组卷", "可组 100 分大题卷，也可按题量自由抽题。练习不限时。") + `
   <form id="config" class="panel flow">
+    <div class="config-controls">
+      ${select("mode", "组卷方式", [["graded", "100 分 · 10 / 20 / 30 / 40"], ["balanced", "100 分 · 20 / 20 / 30 / 30"], ["free", "自定题量与题型"]])}
+      ${select("level", "难度", levels, "全部难度")}
+      ${select("order", "抽题方式", [["random", "随机抽题"], ["ordered", "按题库顺序选题"]])}
+      <label class="check-inline"><input name="unseen" type="checkbox">跳过已做</label>
+    </div>
+    <div class="config-controls" id="free-options" hidden>
+      ${select("type", "题型", types, "全部题型")}
+      <label class="field"><span>题量</span><input name="count" type="number" min="1" step="1" value="5" required></label>
+    </div>
     <fieldset><legend>练习范围</legend>
       <div class="actions">${button("全选", "toggle-chapters", "all", "small")}${button("清除选择", "toggle-chapters", "none", "small")}</div>
       ${groups.map((group, index) => `<div class="config-group">
         <div class="section-head"><h3>${group.title}</h3><button type="button" class="text-button" data-action="toggle-group" data-value="${index}">选择本组</button></div>
         <div class="chapter-selection">${group.chapters.map(([id,label,title]) => `
-          <label class="chapter-choice"><input name="chapter" type="checkbox" value="${id}" ${id === "g01" ? "checked" : ""}><span>${label} · ${title}</span></label>`).join("")}</div></div>`).join("")}
+          <label class="chapter-choice"><input name="chapter" type="checkbox" value="${id}" ${id.startsWith("g") ? "checked" : ""}><span>${label} · ${title}</span></label>`).join("")}</div></div>`).join("")}
     </fieldset>
-    <div class="config-controls">
-      ${select("level", "难度", levels, "全部难度")}${select("type", "题型", types, "全部题型")}
-      ${select("order", "顺序", [["random", "随机抽题"], ["ordered", "按章节和题序"]])}
-      <label class="field"><span>题量</span><input name="count" type="number" min="1" step="1" value="5" required></label>
-      <label class="check-inline"><input name="unseen" type="checkbox">跳过已做</label>
-    </div>
     <div class="config-actions"><button id="assemble" type="submit" class="btn primary">开始练习</button><p class="meta" id="eligible" role="status"></p></div>
   </form>`;
 }
 
 export function chapterPage(chapter, items) {
   const location = chapter.page ? `中文第 3 版 · 正文第 ${chapter.page} 页起` : "补充专题";
+  const long = items.filter(q => q.type === "written");
+  const short = items.filter(q => q.type !== "written");
   return heading(chapter.title, chapter.description, link("全部章节", "#chapters"), `${chapter.label} · ${location}`) + `
   <div class="panel flow">
-    <div class="actions">${button(`练习本章全部 ${items.length} 题`, "start-chapter", chapter.id, "primary")}
-      ${button("只做未做题", "chapter-unseen", chapter.id)}</div>
-    <div class="list">${items.map(q => questionRow(q)).join("")}</div>
+    <div class="actions">${button(`练习本章 ${long.length} 道大题`, "start-chapter", chapter.id, "primary")}
+      ${button("只做未做大题", "chapter-unseen", chapter.id)}${button("练习概念与选择", "chapter-short", chapter.id)}</div>
+    <h2 class="bank-group-title">推导大题</h2><div class="list">${long.map(q => questionRow(q)).join("")}</div>
+    <h2 class="bank-group-title">概念与选择</h2><div class="list">${short.map(q => questionRow(q)).join("")}</div>
   </div>`;
 }
 
 export function bankPage() {
-  return heading("题库全览", "按章节、知识点或题型查找，直接查阅提示与解析。") + `
+  return heading("题库全览", "按章节、知识点、教材题号或题型查找。") + `
     <div class="panel flow"><form id="bank-filters" class="filters">
       <label class="field search"><span>搜索</span><input type="search" name="query" placeholder="如 谐振子、贝尔、g02"></label>
       ${select("chapter", "章节", chapterOptions, "全部章节")}${select("level", "难度", levels, "全部难度")}${select("type", "题型", types, "全部题型")}
+      ${select("source", "来源", [["book", "教材习题与改编"], ["site", "站内原创"]], "全部来源")}
     </form><p class="meta" id="bank-count" role="status"></p><div class="list" id="bank-list"></div></div>`;
 }
 
 export function wrongPage(data) {
   const tracked = Object.values(data.stats).filter(entry => entry.misses);
   const pending = tracked.filter(entry => entry.pending).length;
-  return heading("错题本", "答错的题自动收录。再次做对后会标记为已订正。", pending ? button("复练全部待订正", "start-wrong", "", "primary") : "") + (
+  return heading("错题本", "答错或未得满分的题自动收录。复练得满分后标记为已订正。", pending ? button("复练全部待订正", "start-wrong", "", "primary") : "") + (
     tracked.length ? `<div class="panel flow"><form id="wrong-filters" class="filters">
       ${select("state", "订正状态", [["pending", `待订正（${pending}）`], ["corrected", `已订正（${tracked.length - pending}）`], ["all", "全部"]])}
       ${select("chapter", "章节", chapterOptions, "全部章节")}
@@ -117,7 +126,8 @@ export function questionRow(question, record = null, mode = "") {
   const status = record?.misses && mode === "wrong"
     ? tag(record.pending ? "待订正" : "已订正", record.pending ? "pending" : "corrected") + ` <span>错过 ${record.misses} 次</span>` : "";
   return `<article class="card list-item"><div class="list-label"><h3>${escape(question.topic)}</h3>
-    <p>${chapter.label} · ${typeNames[question.type]} · ${question.difficulty} ${status}</p></div>
+    <p>${chapter.label} · ${typeNames[question.type]} · ${question.difficulty} · ${pointsFor(question)} 分 ${status}</p>
+    ${question.source ? `<p>${sourceText(question.source)}</p>` : ""}</div>
     <div class="actions">${button("看解析", "review", id, "small")}${button(mode === "wrong" ? "重新做" : "练此题", "start-one", id, "small")}</div>
     </article>`;
 }
@@ -125,10 +135,16 @@ export function questionRow(question, record = null, mode = "") {
 const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 export const letter = index => letters[index];
 
+function sourceText(source) {
+  return escape([source.label, source.ref, source.page ? `正文第 ${source.page} 页` : ""].filter(Boolean).join(" · "));
+}
+
 export function questionHeader(question) {
   const chapter = chapterById[question.chapter];
-  return `<div class="tags">${tag(`${chapter.label} · ${chapter.title}`)}${tag(typeNames[question.type])}${tag(question.difficulty)}</div>
-    <h2 class="prompt-title">${escape(question.topic)}</h2><div class="rich">${rich(question.prompt)}</div>`;
+  return `<div class="tags">${tag(`${chapter.label} · ${chapter.title}`)}${tag(typeNames[question.type])}${tag(question.difficulty)}${tag(`${pointsFor(question)} 分`)}</div>
+    <h2 class="prompt-title">${escape(question.topic)}</h2>${question.source ? `<p class="meta source-note">${sourceText(question.source)}</p>` : ""}
+    <div class="rich">${rich(question.prompt)}</div>
+    ${question.parts ? `<ul class="part-outline" aria-label="小问分值">${question.parts.map(part => `<li>${rich(part.label)} <strong>${part.points} 分</strong></li>`).join("")}</ul>` : ""}`;
 }
 
 export function choices(question, selected = [], reveal = false) {
@@ -149,8 +165,25 @@ export function hint(question, open = false) {
 }
 
 export function explanation(question, result = null) {
-  const header = result === null ? "参考解析" : result ? "回答正确" : "需要订正";
-  const answer = question.answer ? `<p class="meta">正确选项 ${question.answer.map(letter).join("、")}</p>` : "";
-  return `<section class="analysis"><h3 class="${result === null ? "" : result ? "status-pass" : "status-fail"}">${header}</h3>
+  const maximum = pointsFor(question);
+  const score = result ? `${earnedFor(question, result)} / ${maximum} 分` : "";
+  const header = result ? (result.correct ? "满分" : "需要订正") + " · " + score : "参考解析";
+  const answer = question.answer ? `<p class="meta">${question.type === "judgment" ? "判断：" + escape(question.options[question.answer[0]]) : "正确选项 " + question.answer.map(letter).join("、")} · ${question.type === "multiple" ? "选项完全匹配" : "答案正确"}得 ${maximum} 分</p>` : "";
+  return `<section class="analysis"><h3 class="${result ? result.correct ? "status-pass" : "status-fail" : ""}">${header}</h3>
     ${answer}<div class="rich">${rich(question.explanation)}</div></section>`;
+}
+
+export function rubric(question, result = null, grading = false) {
+  if (!question.parts) return "";
+  const items = question.parts.map(({label, points, criterion}, index) => {
+    const score = result?.scores?.[index];
+    const name = rich(label);
+    return `<li class="rubric-part"><div><h3>${name} · ${points} 分</h3><div class="rich">${rich(criterion)}</div></div>
+      ${grading ? `<label class="field grade-input"><span>自评分</span><span class="sr-only">${escape(label)}，满分 ${points}</span>
+        <input type="number" name="part-score" min="0" max="${points}" step="0.5" required></label>` : score !== undefined ? `<strong class="part-score">${score} / ${points}</strong>` : ""}</li>`;
+  }).join("");
+  const details = `<h3>参考得分点</h3>${grading ? '<p class="meta">按每小问录入分数，支持 0.5 分。未得分的小问填 0。</p>' : ""}<ol class="rubric-list">${items}</ol>`;
+  return grading ? `<form id="grade-form" class="rubric">${details}
+      <div class="actions"><button type="submit" class="btn primary">保存自评分</button><button type="button" class="btn" data-action="fill-score">填入满分</button></div></form>`
+    : `<section class="rubric">${details}</section>`;
 }
