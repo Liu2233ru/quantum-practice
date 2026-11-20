@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#181427">
+  <meta name="description" content="按格里菲斯量子力学概论第3版章节练习、自由组卷、查阅解析和复习错题。">
+  <title>量子力学练习册</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="vendor/katex/katex.min.css">
+  <link rel="stylesheet" href="styles.css">
+  <script src="vendor/katex/katex.min.js" defer></script>
+  <script type="module" src="src/app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳到主要内容</a>
+  <aside class="sidebar">
+    <a class="brand" href="#chapters">
+      <span class="brand-icon" aria-hidden="true">ψ</span>
+      <span><strong>量子力学练习册</strong><small>格里菲斯 · 第 3 版</small></span>
+    </a>
+    <nav id="nav" aria-label="学习分区"></nav>
+    <div class="sidebar-end">
+      <span class="version"><i></i>V1 内测</span>
+      <button class="data-button" data-action="data" type="button">学习数据</button>
+    </div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><div class="topbar-inner"><span>学习空间</span><span class="breadcrumb-slash" aria-hidden="true">/</span><strong id="location">章节练习</strong></div></header>
+    <main id="main" tabindex="-1">
+      <p id="storage-warning" class="notice error" role="status" hidden></p>
+      <div id="view"></div>
+      <noscript><p class="notice error">请启用 JavaScript 以使用练习册。</p></noscript>
+    </main>
+    <footer><span>量子力学练习册</span><span>学习记录保存在当前浏览器</span></footer>
+  </div>
+  <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+  <input type="file" id="import-file" accept=".json,application/json" hidden>
+  <div class="sr-only" id="feedback" role="status" aria-live="polite"></div>
+</body>
+</html>

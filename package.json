@@ -1,0 +1,7 @@
+{
+  "name": "quantum-practice",
+  "version": "1.0.0-beta.1",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}
