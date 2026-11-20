@@ -3,13 +3,12 @@ export const freshData = () => ({version: 1, stats: {}, session: null});
 export const sameAnswer = (actual, expected) =>
   actual.length === expected.length && expected.every(index => actual.includes(index));
 
-export const presets = {
-  graded: [10, 20, 30, 40],
-  balanced: [20, 20, 30, 30],
-};
+export const paperTotal = 100;
+export const currentScoring = 2;
+const typicalWrittenPaperLength = 6;
 
 export function pointsFor(question) {
-  return question.parts?.reduce((sum, part) => sum + part.points, 0) ?? (question.type === "multiple" ? 4 : 2);
+  return question.parts?.reduce((sum, part) => sum + part.points, 0) ?? question.points ?? (question.type === "multiple" ? 4 : 2);
 }
 
 export function studyPriority(question) {
@@ -30,55 +29,6 @@ export function scoreSession(session, questions) {
   }, {earned: 0, possible: 0});
 }
 
-export function missingPresetPoints(pool, preset) {
-  const counts = new Map();
-  for (const question of pool) {
-    if (question.type === "written") {
-      const points = pointsFor(question);
-      counts.set(points, (counts.get(points) ?? 0) + 1);
-    }
-  }
-  return preset.filter(points => {
-    const available = counts.get(points) ?? 0;
-    counts.set(points, available - 1);
-    return available < 1;
-  });
-}
-
-export function buildPreset(pool, preset, order, random = Math.random) {
-  if (missingPresetPoints(pool, preset).length) return [];
-  const candidates = order === "random" ? shuffled(pool, random) : pool;
-  const buckets = new Map([...new Set(preset)].map(points => [
-    points, candidates.filter(question => question.type === "written" && pointsFor(question) === points),
-  ]));
-  const chosen = [];
-  const chapters = new Set();
-  let best = [];
-  let bestPriority = -1;
-  function visit(index, originals) {
-    if (index === preset.length) {
-      const priority = originals * (preset.length + 1) + chapters.size;
-      if (priority > bestPriority) {
-        best = chosen.map(question => question.id);
-        bestPriority = priority;
-      }
-      return;
-    }
-    for (const question of buckets.get(preset[index])) {
-      if (chosen.includes(question)) continue;
-      const isNewChapter = !chapters.has(question.chapter);
-      chosen.push(question);
-      chapters.add(question.chapter);
-      visit(index + 1, originals + Number(studyPriority(question) === 0));
-      chosen.pop();
-      if (isNewChapter) chapters.delete(question.chapter);
-      if (bestPriority === preset.length * (preset.length + 2)) break;
-    }
-  }
-  visit(0, 0);
-  return best;
-}
-
 export function shuffled(items, random = Math.random) {
   const copy = [...items];
   for (let i = copy.length - 1; i > 0; i--) {
@@ -88,27 +38,83 @@ export function shuffled(items, random = Math.random) {
   return copy;
 }
 
-export function buildSet(pool, count, order, random = Math.random) {
-  const buckets = new Map();
+export function paperOptions(pool) {
+  const reachable = Array.from({length: paperTotal + 1}, () => new Set());
+  reachable[0].add(0);
   for (const question of pool) {
-    if (!buckets.has(question.chapter)) buckets.set(question.chapter, []);
-    buckets.get(question.chapter).push(question);
-  }
-  const queues = [...buckets.values()].map(questions => (order === "random" ? shuffled(questions, random) : questions)
-    .sort((a, b) => studyPriority(a) - studyPriority(b)).map(question => question.id));
-  const round = order === "random" ? shuffled(queues, random) : queues;
-  const chosen = new Set();
-  while (chosen.size < Math.min(count, pool.length)) {
-    for (const queue of round) {
-      if (chosen.size >= count) break;
-      if (queue.length) chosen.add(queue.shift());
+    const points = pointsFor(question);
+    if (!Number.isInteger(points) || points < 1 || points > paperTotal) continue;
+    for (let total = paperTotal; total >= points; total--) {
+      for (const count of reachable[total - points]) reachable[total].add(count + 1);
     }
   }
-  return order === "random" ? shuffled(chosen, random) : pool.filter(q => chosen.has(q.id)).map(q => q.id);
+  return {
+    counts: [...reachable[paperTotal]].sort((a, b) => a - b),
+    closest: reachable.findLastIndex(counts => counts.size > 0),
+  };
 }
 
-export function createSession(ids, label, now = Date.now()) {
-  return {ids, label, started: now, position: 0, drafts: {}, answers: {}, finished: false};
+export function buildPaper(pool, count, order, random = Math.random) {
+  const candidates = order === "random" ? shuffled(pool, random) : pool;
+  const formatPaths = () => Array.from({length: paperTotal + 1}, () => new Map());
+  const completed = formatPaths();
+  completed[0].set(0, {quality: 0, breadth: 0});
+  const chapters = new Map();
+  for (const question of candidates) {
+    if (!chapters.has(question.chapter)) chapters.set(question.chapter, []);
+    chapters.get(question.chapter).push(question);
+  }
+  function retainBetter(destination, length, path) {
+    const best = destination.get(length);
+    if (!best || path.quality > best.quality || (path.quality === best.quality && path.breadth > best.breadth)) {
+      destination.set(length, path);
+    }
+  }
+  function extend(destination, previous, question, quality, breadthBonus) {
+    for (const [length, path] of previous) {
+      if (count && length >= count) continue;
+      retainBetter(destination, length + 1, {
+        quality: path.quality + quality, breadth: path.breadth + breadthBonus, id: question.id, previous: path,
+      });
+    }
+  }
+  for (const questions of chapters.values()) {
+    // Keep papers that already include this chapter apart so coverage is rewarded only once.
+    const includingChapter = formatPaths();
+    for (const question of questions) {
+      const points = pointsFor(question);
+      if (!Number.isInteger(points) || points < 1 || points > paperTotal) continue;
+      const quality = points * (question.type === "written" ? paperTotal + 1 : 0) + (studyPriority(question) === 0 ? points : 0);
+      // Descending amounts prevent the same question from entering a paper twice.
+      for (let total = paperTotal; total >= points; total--) {
+        const destination = includingChapter[total];
+        extend(destination, includingChapter[total - points], question, quality, 0);
+        extend(destination, completed[total - points], question, quality, 1);
+      }
+    }
+    includingChapter.forEach((paths, total) => {
+      for (const [length, path] of paths) retainBetter(completed[total], length, path);
+    });
+  }
+  let selected = completed[paperTotal].get(count);
+  if (!count) {
+    let bestDistance = Infinity;
+    for (const [length, path] of completed[paperTotal]) {
+      const distance = Math.abs(length - typicalWrittenPaperLength);
+      if (!selected || path.quality > selected.quality || (path.quality === selected.quality &&
+        (distance < bestDistance || (distance === bestDistance && path.breadth > selected.breadth)))) {
+        selected = path;
+        bestDistance = distance;
+      }
+    }
+  }
+  const ids = new Set();
+  for (let path = selected; path?.id; path = path.previous) ids.add(path.id);
+  return candidates.filter(question => ids.has(question.id)).map(question => question.id);
+}
+
+export function createSession(ids, label, now = Date.now(), scoring = currentScoring) {
+  return {ids, label, started: now, scoring, position: 0, drafts: {}, answers: {}, finished: false};
 }
 
 export function recordAnswer(data, question, correct, now = Date.now(), scores) {
@@ -161,7 +167,7 @@ function isDraft(draft, question) {
     (question.type === "multiple" || draft.length <= 1);
 }
 
-export function readData(json, questions) {
+export function readData(json, questions, legacyQuestions = questions) {
   const data = JSON.parse(json);
   if (data?.version !== 1 || !isObject(data.stats)) throw new Error("备份格式不兼容。");
   const stats = {};
@@ -175,26 +181,29 @@ export function readData(json, questions) {
   const input = data.session;
   let session = null;
   if (input && Array.isArray(input.ids) && input.ids.length && input.ids.every(id => questions.has(id))) {
+    const scoring = input.scoring ?? 1;
+    const sessionQuestions = scoring === 1 ? legacyQuestions : questions;
     if (new Set(input.ids).size !== input.ids.length || typeof input.label !== "string" || input.label.length > 120 ||
         !isCount(input.started) || !isCount(input.position) || input.position >= input.ids.length ||
-        typeof input.finished !== "boolean" || !isObject(input.drafts) || !isObject(input.answers)) {
+        typeof input.finished !== "boolean" || !isObject(input.drafts) || !isObject(input.answers) ||
+        ![1, currentScoring].includes(scoring) || !input.ids.every(id => sessionQuestions.has(id))) {
       throw new Error("备份中有无效的练习记录。");
     }
-    session = createSession([...input.ids], input.label, input.started);
+    session = createSession([...input.ids], input.label, input.started, scoring);
     session.position = input.position;
     session.finished = input.finished;
     for (const id of session.ids) {
       const draft = input.drafts[id];
       const answer = input.answers[id];
+      const question = sessionQuestions.get(id);
       if (draft !== undefined) {
-        if (!isDraft(draft, questions.get(id))) throw new Error("备份中有无效的作答草稿。");
+        if (!isDraft(draft, question)) throw new Error("备份中有无效的作答草稿。");
         session.drafts[id] = draft;
       }
       if (answer !== undefined) {
         if (!answer || typeof answer.correct !== "boolean" || !isCount(answer.at)) throw new Error("备份中有无效的答案。");
         session.answers[id] = {correct: answer.correct, at: answer.at};
         if (answer.scores !== undefined) {
-          const question = questions.get(id);
           if (!validScores(question, answer.scores) || (earnedFor(question, answer) === pointsFor(question)) !== answer.correct) {
             throw new Error("备份中有无效的小问得分。");
           }

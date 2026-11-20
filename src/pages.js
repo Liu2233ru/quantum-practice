@@ -1,6 +1,6 @@
-import {chapterById, chapters, groups, levelNames, typeNames} from "./chapters.js?v=1.1";
+import {chapterById, chapters, groups, levelNames, typeNames} from "./chapters.js?v=1.2";
 import {escape, icon, rich} from "./display.js";
-import {earnedFor, pointsFor} from "./engine.js?v=1.1";
+import {earnedFor, pointsFor} from "./engine.js?v=1.2";
 
 const navItems = {chapters: "章节练习", custom: "自由组卷", bank: "题库全览", wrong: "错题本"};
 export function navigation(active, pending) {
@@ -36,7 +36,7 @@ export function home(bank, data) {
   const pending = Object.values(data.stats).filter(item => item.pending).length;
   return `<section class="hero">
     <div class="hero-copy"><p class="eyebrow">格里菲斯《量子力学概论》· 第 3 版</p><h1>量子力学练习册</h1>
-    <p>逐章练习教材大题，按小问对照得分点自评。用概念判断查漏补缺。</p>
+    <p>逐章练习教材大题，对照每步推导和得分点自评。可跨章组满 100 分。</p>
     <div class="actions">${link("组 100 分大题卷", "#custom", "hero-primary")}${link("开始第 1 章", "#chapter/g01", "hero-secondary")}</div></div>
     <figure class="hero-art"><canvas role="img" aria-label="高斯波包的实部与其上下包络"></canvas><figcaption>高斯波包 · 实部与包络</figcaption></figure>
   </section>
@@ -63,18 +63,16 @@ const types = Object.entries(typeNames);
 const chapterOptions = chapters.map(ch => [ch.id, `${ch.label} · ${ch.title}`]);
 
 export function customPage() {
-  return heading("自由组卷", "可组 100 分大题卷，也可按题量自由抽题。练习不限时。") + `
+  return heading("自由组卷", "从所选范围抽题，保留每题原分值，卷面总分恰好 100 分。练习不限时。") + `
   <form id="config" class="panel flow">
     <div class="config-controls">
-      ${select("mode", "组卷方式", [["graded", "100 分 · 10 / 20 / 30 / 40"], ["balanced", "100 分 · 20 / 20 / 30 / 30"], ["free", "自定题量与题型"]])}
+      ${select("type", "题型", [types[0], ["", "混合题型"], ...types.slice(1)])}
       ${select("level", "难度", levels, "全部难度")}
+      ${select("count", "题量", [["0", "自动选题"]])}
       ${select("order", "抽题方式", [["random", "随机抽题"], ["ordered", "按题库顺序选题"]])}
       <label class="check-inline"><input name="unseen" type="checkbox">跳过已做</label>
     </div>
-    <div class="config-controls" id="free-options" hidden>
-      ${select("type", "题型", types, "全部题型")}
-      <label class="field"><span>题量</span><input name="count" type="number" min="1" step="1" value="5" required></label>
-    </div>
+    <div class="config-actions"><button id="assemble" type="submit" class="btn primary">生成 100 分练习卷</button><p class="meta" id="eligible" role="status"></p></div>
     <fieldset><legend>练习范围</legend>
       <div class="actions">${button("全选", "toggle-chapters", "all", "small")}${button("清除选择", "toggle-chapters", "none", "small")}</div>
       ${groups.map((group, index) => `<div class="config-group">
@@ -82,7 +80,6 @@ export function customPage() {
         <div class="chapter-selection">${group.chapters.map(([id,label,title]) => `
           <label class="chapter-choice"><input name="chapter" type="checkbox" value="${id}" ${id.startsWith("g") ? "checked" : ""}><span>${label} · ${title}</span></label>`).join("")}</div></div>`).join("")}
     </fieldset>
-    <div class="config-actions"><button id="assemble" type="submit" class="btn primary">开始练习</button><p class="meta" id="eligible" role="status"></p></div>
   </form>`;
 }
 
@@ -167,22 +164,26 @@ export function hint(question, open = false) {
 export function explanation(question, result = null) {
   const maximum = pointsFor(question);
   const score = result ? `${earnedFor(question, result)} / ${maximum} 分` : "";
+  if (question.parts) {
+    return result ? `<section class="analysis"><h3 class="${result.correct ? "status-pass" : "status-fail"}">${result.correct ? "满分" : "需要订正"} · ${score}</h3></section>` : "";
+  }
   const header = result ? (result.correct ? "满分" : "需要订正") + " · " + score : "参考解析";
-  const answer = question.answer ? `<p class="meta">${question.type === "judgment" ? "判断：" + escape(question.options[question.answer[0]]) : "正确选项 " + question.answer.map(letter).join("、")} · ${question.type === "multiple" ? "选项完全匹配" : "答案正确"}得 ${maximum} 分</p>` : "";
+  const answer = question.type === "judgment" ? escape(question.options[question.answer[0]]) : question.answer.map(letter).join("、");
   return `<section class="analysis"><h3 class="${result ? result.correct ? "status-pass" : "status-fail" : ""}">${header}</h3>
-    ${answer}<div class="rich">${rich(question.explanation)}</div></section>`;
+    <p class="meta">参考答案 ${answer} · ${question.type === "multiple" ? "选项完全匹配" : "答案正确"}得 ${maximum} 分</p><div class="rich">${rich(question.explanation)}</div></section>`;
 }
 
 export function rubric(question, result = null, grading = false) {
   if (!question.parts) return "";
-  const items = question.parts.map(({label, points, criterion}, index) => {
+  const items = question.parts.map(({label, points, steps}, index) => {
     const score = result?.scores?.[index];
     const name = rich(label);
-    return `<li class="rubric-part"><div><h3>${name} · ${points} 分</h3><div class="rich">${rich(criterion)}</div></div>
+    return `<li class="rubric-part"><div class="rubric-title"><h3>${name} · ${points} 分</h3>
       ${grading ? `<label class="field grade-input"><span>自评分</span><span class="sr-only">${escape(label)}，满分 ${points}</span>
-        <input type="number" name="part-score" min="0" max="${points}" step="0.5" required></label>` : score !== undefined ? `<strong class="part-score">${score} / ${points}</strong>` : ""}</li>`;
+        <input type="number" name="part-score" min="0" max="${points}" step="0.5" required></label>` : score !== undefined ? `<strong class="part-score">${score} / ${points}</strong>` : ""}</div>
+      <ol class="work-steps">${steps.map(step => `<li><span class="point-badge">${step.points ? "+" + step.points + " 分" : "核对"}</span><div class="rich">${rich(step.text)}</div></li>`).join("")}</ol></li>`;
   }).join("");
-  const details = `<h3>参考得分点</h3>${grading ? '<p class="meta">按每小问录入分数，支持 0.5 分。未得分的小问填 0。</p>' : ""}<ol class="rubric-list">${items}</ol>`;
+  const details = `<h3 class="rubric-heading" tabindex="-1">逐步解析与得分点</h3>${grading ? '<p class="meta">核对每一步，再给小问评分。支持 0.5 分，未得分的小问填 0。</p>' : ""}<ol class="rubric-list">${items}</ol>`;
   return grading ? `<form id="grade-form" class="rubric">${details}
       <div class="actions"><button type="submit" class="btn primary">保存自评分</button><button type="button" class="btn" data-action="fill-score">填入满分</button></div></form>`
     : `<section class="rubric">${details}</section>`;

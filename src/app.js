@@ -1,20 +1,8 @@
-import {chapterById, chapters, groups} from "./chapters.js?v=1.1";
-import {partA} from "./bank/part-a.js";
-import {partB} from "./bank/part-b.js";
-import {extra} from "./bank/extra.js";
-import {gradedLegacy} from "./bank/rubrics.js";
-import {judgments} from "./bank/judgments.js";
-import {bookA} from "./bank/book-a.js";
-import {bookB} from "./bank/book-b.js";
-import {bookExtra} from "./bank/book-extra.js";
-import {buildPreset, buildSet, createSession, earnedFor, freshData, missingPresetPoints, pointsFor, presets, readData, recordAnswer, recordGrade, sameAnswer, scoreSession, storageKey, studyPriority, tally} from "./engine.js?v=1.1";
+import {chapterById, groups} from "./chapters.js?v=1.2";
+import {bank, byId, legacyById} from "./bank/index.js?v=1.2";
+import {buildPaper, createSession, earnedFor, freshData, paperOptions, pointsFor, readData, recordAnswer, recordGrade, sameAnswer, scoreSession, storageKey, tally} from "./engine.js?v=1.2";
 import {drawWave, escape} from "./display.js";
-import {bankPage, button, chapterPage, choices, customPage, empty, explanation, heading, hint, home, link, navigation, questionHeader, questionRow, rubric, wrongPage} from "./pages.js?v=1.1";
-
-const source = [...bookA, ...bookB, ...bookExtra, ...gradedLegacy, ...judgments, ...partA, ...partB, ...extra];
-const bank = chapters.flatMap(chapter => source.filter(question => question.chapter === chapter.id)
-  .sort((a, b) => studyPriority(a) - studyPriority(b)));
-const byId = new Map(bank.map(question => [question.id, question]));
+import {bankPage, button, chapterPage, choices, customPage, empty, explanation, heading, hint, home, link, navigation, questionHeader, questionRow, rubric, wrongPage} from "./pages.js?v=1.2";
 const view = document.querySelector("#view");
 const main = document.querySelector("#main");
 const dialog = document.querySelector("#dialog");
@@ -29,7 +17,7 @@ let waveObserver;
 
 try {
   const saved = localStorage.getItem(storageKey);
-  if (saved) data = readData(saved, byId);
+  if (saved) data = readData(saved, byId, legacyById);
 } catch {
   storageWarning("读取学习记录失败。请检查浏览器存储或导入以前的备份。");
 }
@@ -101,32 +89,27 @@ function configState() {
   const selected = values.getAll("chapter");
   const level = values.get("level");
   const type = values.get("type");
-  const mode = values.get("mode");
-  const preset = Object.hasOwn(presets, mode) ? presets[mode] : null;
   const pool = bank.filter(q => selected.includes(q.chapter) &&
-    (!level || level === q.difficulty) && (preset ? q.type === "written" : !type || type === q.type) &&
+    (!level || level === q.difficulty) && (!type || type === q.type) &&
     (!values.has("unseen") || !data.stats[q.id]));
-  return {form, selected, pool, preset, count: Number(values.get("count")), order: values.get("order")};
+  return {form, selected, pool, count: Number(values.get("count")), order: values.get("order")};
 }
 
 function updateConfig() {
   const state = configState();
   if (!state) return;
   const countInput = state.form.elements.count;
-  const maximum = state.pool.length;
   const eligible = new Set(state.pool.map(q => q.chapter)).size;
-  const missing = state.preset ? missingPresetPoints(state.pool, state.preset) : [];
-  const free = !state.preset;
-  document.querySelector("#free-options").hidden = !free;
-  countInput.disabled = !free;
-  state.form.elements.type.disabled = !free;
-  countInput.max = Math.max(1, maximum);
-  document.querySelector("#assemble").disabled = free ? maximum === 0 || !countInput.validity.valid : !!missing.length;
-  document.querySelector("#assemble").textContent = free ? "开始练习" : "生成 100 分大题卷";
-  const absent = state.selected.length - eligible;
-  const detail = missing.length ? ` · 仍缺 ${missing.map(points => points + " 分题").join("、")}，请扩大范围或切换分值方案`
-    : free && state.count > maximum && maximum ? ` · 请将题量改为 ${maximum} 或以下` : "";
-  document.querySelector("#eligible").textContent = `${maximum} 道可选 · 覆盖 ${eligible} 个章节或专题${absent ? ` · ${absent} 个已选范围无符合条件的题` : ""}${detail}`;
+  const {counts, closest} = paperOptions(state.pool);
+  if (countInput.dataset.counts !== counts.join(",")) {
+    countInput.replaceChildren(new Option("自动选题", "0"), ...counts.map(count => new Option(count + " 道", count)));
+    if (counts.includes(state.count)) countInput.value = String(state.count);
+    countInput.dataset.counts = counts.join(",");
+  }
+  countInput.disabled = !counts.length;
+  document.querySelector("#assemble").disabled = !counts.length;
+  const detail = counts.length ? "可组满 100 分" : `当前条件无法凑满 100 分，最多可组 ${closest} 分。可扩大章节范围或放宽筛选。`;
+  document.querySelector("#eligible").textContent = `${state.pool.length} 道候选 · ${eligible} 个章节或专题 · ${detail}`;
 }
 
 function updateBank() {
@@ -200,8 +183,12 @@ function start(ids, title) {
   }
 }
 
+function sessionBank() {
+  return data.session?.scoring === 1 ? legacyById : byId;
+}
+
 function currentQuestion() {
-  return byId.get(data.session?.ids[data.session.position]);
+  return sessionBank().get(data.session?.ids[data.session.position]);
 }
 
 function sessionPage() {
@@ -214,11 +201,11 @@ function sessionPage() {
   const position = session.position;
   const total = session.ids.length;
   const current = tally(session);
-  const scores = scoreSession(session, byId);
+  const scores = scoreSession(session, sessionBank());
   const direction = q.type === "multiple" ? "多选题，可选择多个选项。" : q.type === "judgment" ? "判断题干中的陈述是否正确。" : "选择一个答案后提交。";
   const review = written && (writtenRevealed || result);
   const writer = `<label class="field"><span>推导草稿（可选）</span><textarea id="draft" maxlength="4000" placeholder="记下关键等式和推导步骤" ${result ? "readonly" : ""}>${escape(draft ?? "")}</textarea></label>`;
-  return heading(escape(session.label), `第 ${position + 1} / ${total} 题 · 已答 ${current.answered} 题`) + `
+  return heading(escape(session.label), `第 ${position + 1} / ${total} 题 · 已答 ${current.answered} 题${session.scoring === 1 ? " · 沿用旧版分值" : ""}`) + `
     <div class="session-grid">
       <article class="panel flow">
         ${questionHeader(q)}${written ? writer : `<p class="meta">${direction}</p>${choices(q, draft ?? [], !!result)}`}
@@ -245,12 +232,12 @@ function results() {
   const session = data.session;
   if (!session) return empty("暂无练习小结", "先完成一次练习即可查看小结。", link("选章节", "#chapters", "primary"));
   const count = tally(session);
-  const score = scoreSession(session, byId);
-  return heading("练习小结", `${escape(session.label)} · 共 ${session.ids.length} 道题`, link("回到章节练习", "#chapters")) +
+  const score = scoreSession(session, sessionBank());
+  return heading("练习小结", `${escape(session.label)} · 共 ${session.ids.length} 道题${session.scoring === 1 ? " · 沿用旧版分值" : ""}`, link("回到章节练习", "#chapters")) +
     `<section class="panel flow"><p class="result-score"><strong>${score.earned}</strong> / ${score.possible} 分</p><p>已答 <strong>${count.answered}</strong>　满分 <strong>${count.correct}</strong>　待订正 <strong>${count.answered - count.correct}</strong>　未判定 <strong>${count.skipped}</strong></p>
     <div class="actions">${link("打开错题本", "#wrong", "primary")}${link("重新组卷", "#custom")}</div>
     <div class="list">${session.ids.map(id => {
-      const q = byId.get(id);
+      const q = sessionBank().get(id);
       const answer = session.answers[id];
       const status = answer ? answer.correct ? "满分" : "待订正" : "未判定";
       const points = answer ? `${earnedFor(q, answer)} / ${pointsFor(q)} 分` : `满分 ${pointsFor(q)} 分`;
@@ -303,7 +290,7 @@ function actions(action, value) {
   const session = data.session;
   const question = currentQuestion();
   if (action === "review") review(byId.get(value));
-  if (action === "review-result") review(byId.get(value), session?.answers[value]);
+  if (action === "review-result") review(sessionBank().get(value), session?.answers[value]);
   if (action === "start-one") start([value], "单题练习");
   if (action === "start-wrong") start(wrongMatches("pending").map(q => q.id), "错题复练");
   if (["start-chapter", "chapter-unseen", "chapter-short"].includes(action)) {
@@ -342,7 +329,7 @@ function actions(action, value) {
   if (action === "reveal-written" && question?.type === "written") {
     writtenRevealed = true;
     render();
-    view.querySelector('[name="part-score"]')?.focus();
+    view.querySelector(".rubric-heading")?.focus();
   }
   if (action === "fill-score") {
     view.querySelectorAll('#grade-form [name="part-score"]').forEach(input => { input.value = input.max; });
@@ -376,14 +363,9 @@ document.addEventListener("submit", event => {
   if (event.target.id === "bank-filters" || event.target.id === "wrong-filters") event.preventDefault();
   if (event.target.id === "config") {
     event.preventDefault();
-    const {pool, count, order, preset} = configState();
-    if (preset) {
-      const ids = buildPreset(pool, preset, order);
-      if (ids.length) start(ids, "100 分大题卷 · " + preset.join(" / "));
-      return;
-    }
-    if (!Number.isInteger(count) || count < 1 || count > pool.length) return;
-    start(buildSet(pool, count, order), "自由组卷");
+    const {pool, count, order} = configState();
+    const ids = buildPaper(pool, count, order);
+    if (ids.length) start(ids, "100 分练习卷");
   }
   if (event.target.id === "grade-form") {
     event.preventDefault();
@@ -410,7 +392,7 @@ upload.addEventListener("change", async () => {
   if (!file) return;
   try {
     if (file.size > 2_000_000) throw new Error("备份文件过大。");
-    const restored = readData(await file.text(), byId);
+    const restored = readData(await file.text(), byId, legacyById);
     confirm("导入学习备份？", "导入会替换当前浏览器已有的练习进度和错题记录。", "确认导入", () => {
       data = restored;
       openHint = writtenRevealed = false;
